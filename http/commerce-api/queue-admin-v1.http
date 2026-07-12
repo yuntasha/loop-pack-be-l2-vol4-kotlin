@@ -1,0 +1,32 @@
+### 대기열 설정 관리자 API
+# 권한: X-Loopers-Ldap: loopers.admin (없거나 틀리면 403)
+# 설정이 없는 토픽은 기본값(pollingIntervalMs=3000, admitCountPerPoll=100,
+# admitWindowSec=10, accessTokenTtlSec=30)으로 동작한다.
+
+### 설정 조회 — 미설정 토픽은 기본값 반환
+GET {{commerce-api}}/api-admin/v1/queue/order/config
+X-Loopers-Ldap: loopers.admin
+
+### 설정 변경 — 부분 수정(넘긴 필드만 갱신)
+PUT {{commerce-api}}/api-admin/v1/queue/order/config
+X-Loopers-Ldap: loopers.admin
+Content-Type: application/json
+
+{
+  "pollingIntervalMs": 3000,
+  "admitCountPerPoll": 200,
+  "admitWindowSec": 10,
+  "accessTokenTtlSec": 30
+}
+
+### 설정 변경 후 재조회 — 변경 반영 확인
+GET {{commerce-api}}/api-admin/v1/queue/order/config
+X-Loopers-Ldap: loopers.admin
+
+### 설정 변경 — 관리자 권한 없음 (403)
+PUT {{commerce-api}}/api-admin/v1/queue/order/config
+Content-Type: application/json
+
+{
+  "admitCountPerPoll": 500
+}

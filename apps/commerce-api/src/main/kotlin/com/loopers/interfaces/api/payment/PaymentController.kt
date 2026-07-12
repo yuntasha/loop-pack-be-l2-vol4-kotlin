@@ -1,11 +1,11 @@
 package com.loopers.interfaces.api.payment
 
-import com.loopers.domain.auth.AuthService
 import com.loopers.interfaces.api.ApiResponse
+import com.loopers.interfaces.api.auth.UserAuth
+import com.loopers.interfaces.api.waitingqueue.WaitingQueue
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
-import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 
@@ -13,15 +13,13 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/v1/payments")
 class PaymentController(
     private val paymentApplicationService: PaymentApplicationServicePort,
-    private val authService: AuthService,
 ) {
     @PostMapping
+    @WaitingQueue("order")
     fun pay(
-        @RequestHeader("X-Loopers-LoginId") loginId: String,
-        @RequestHeader("X-Loopers-LoginPw") loginPw: String,
+        @UserAuth userId: Long,
         @RequestBody request: PaymentV1Dto.PaymentRequest,
     ): ApiResponse<PaymentV1Dto.PaymentResponse> {
-        val userId = authService.login(loginId, loginPw)
         val result = paymentApplicationService.pay(request.toCommand(userId))
         return ApiResponse.success(PaymentV1Dto.PaymentResponse.from(result))
     }

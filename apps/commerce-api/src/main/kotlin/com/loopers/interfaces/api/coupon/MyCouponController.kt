@@ -1,9 +1,8 @@
 package com.loopers.interfaces.api.coupon
 
-import com.loopers.domain.auth.AuthService
 import com.loopers.interfaces.api.ApiResponse
+import com.loopers.interfaces.api.auth.UserAuth
 import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 
@@ -15,14 +14,11 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/v1/users/me/coupons")
 class MyCouponController(
     private val couponApplicationService: CouponApplicationServicePort,
-    private val authService: AuthService,
 ) {
     @GetMapping
     fun getMyCoupons(
-        @RequestHeader("X-Loopers-LoginId") loginId: String,
-        @RequestHeader("X-Loopers-LoginPw") loginPw: String,
+        @UserAuth userId: Long,
     ): ApiResponse<List<MyCouponV1Dto.CouponResponse>> {
-        val userId = authService.login(loginId, loginPw)
         val results = couponApplicationService.getMyCoupons(userId)
         return ApiResponse.success(results.map { MyCouponV1Dto.CouponResponse.from(it) })
     }

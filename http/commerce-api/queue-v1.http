@@ -1,0 +1,41 @@
+### 대기열(Waiting Queue) 사용자 플로우
+# 전제: 사용자 계정이 존재해야 한다(회원가입: user-v1.http 참고).
+# 흐름: (0) @WaitingQueue 보호 API 호출 → 429 + waitToken
+#      → (1) GET /queue/position 폴링 → WAITING/ADMITTED
+#      → (2) ADMITTED 확인 후 POST /queue/token → accessToken
+#      → (3) 보호 API 재호출(accessToken 첨부) → 200
+
+### (0) @WaitingQueue 보호 API 를 입장 토큰 없이 호출 — 429 + 대기열 토큰
+# 실제로는 주문/쿠폰 등 @WaitingQueue("order") 가 붙은 업무 API 를 호출한다.
+# 응답 바디의 data.waitToken 을 복사해 아래 X-Queue-Wait-Token 에 넣는다.
+POST {{commerce-api}}/api/v1/orders
+X-Loopers-LoginId: testuser01
+X-Loopers-LoginPw: Password1!
+Content-Type: application/json
+
+{}
+
+### (1) 순번/예상시간 조회 — 대기 중 (WAITING)
+GET {{commerce-api}}/api/v1/queue/position
+X-Queue-Wait-Token: wq.PASTE_WAIT_TOKEN_HERE.signature
+
+### (1-예외) 위조된 대기열 토큰 — 401
+GET {{commerce-api}}/api/v1/queue/position
+X-Queue-Wait-Token: wq.forged.signature
+
+### (2) 입장 토큰 발급 — 승격(ADMITTED) 후 호출 시 accessToken 반환
+POST {{commerce-api}}/api/v1/queue/token
+X-Queue-Wait-Token: wq.PASTE_WAIT_TOKEN_HERE.signature
+
+### (2-예외) 아직 승격되지 않은 상태에서 발급 요청 — 409 (NOT_ADMITTED)
+POST {{commerce-api}}/api/v1/queue/token
+X-Queue-Wait-Token: wq.PASTE_WAIT_TOKEN_HERE.signature
+
+### (3) 보호 API 재호출 — 입장 토큰 첨부 시 통과(200)
+POST {{commerce-api}}/api/v1/orders
+X-Loopers-LoginId: testuser01
+X-Loopers-LoginPw: Password1!
+X-Queue-Access-Token: at.PASTE_ACCESS_TOKEN_HERE.signature
+Content-Type: application/json
+
+{}

@@ -1,9 +1,11 @@
 package com.loopers.interfaces.api
 
+import com.loopers.domain.auth.AuthService
 import com.loopers.domain.user.User
 import com.loopers.domain.user.UserInfo
 import com.loopers.interfaces.api.user.UserApplicationServicePort
 import com.loopers.interfaces.api.user.UserController
+import com.loopers.interfaces.api.waitingqueue.QueueApplicationServicePort
 import com.loopers.support.error.CoreException
 import com.loopers.support.error.ErrorType
 import com.ninjasquad.springmockk.MockkBean
@@ -29,6 +31,13 @@ class UserControllerTest(
 ) {
     @MockkBean
     private lateinit var userApplicationService: UserApplicationServicePort
+
+    // 전역 WebMvcConfig 가 슬라이스에 끌어오는 인증/대기열 웹 컴포넌트의 의존성 목킹
+    @MockkBean
+    private lateinit var authService: AuthService
+
+    @MockkBean
+    private lateinit var queueApplicationService: QueueApplicationServicePort
 
     @DisplayName("회원가입 API를 호출하면, UserFacade.signup이 호출된다.")
     @Test

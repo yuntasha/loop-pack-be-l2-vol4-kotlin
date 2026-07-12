@@ -41,6 +41,12 @@ outbox:
   relay:
     interval-ms: 30000
 
+waiting-queue:
+  token:
+    secret: ${WAITING_QUEUE_TOKEN_SECRET:loopers-local-waiting-queue-secret}
+  admission:
+    tick-ms: 1000
+
 pg-simulator:
   url: ${PG_SIMULATOR_URL:http://localhost:8082}
   callback-url: ${PG_CALLBACK_URL:http://localhost:8080/api/v1/payments/callback}
