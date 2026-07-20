@@ -16,7 +16,11 @@ import java.time.ZonedDateTime
 @Entity
 @Table(
     name = "outbox",
-    indexes = [Index(name = "idx_outbox_status_created_at", columnList = "status, created_at")],
+    indexes = [
+        Index(name = "idx_outbox_status_created_at", columnList = "status, created_at"),
+        // 가중치 재계산(replay) 배치의 topic + occurred_at 범위 조회용
+        Index(name = "idx_outbox_topic_occurred_at", columnList = "topic, occurred_at"),
+    ],
 )
 class OutboxEntity(
     @Column(name = "event_id", nullable = false, unique = true, updatable = false)

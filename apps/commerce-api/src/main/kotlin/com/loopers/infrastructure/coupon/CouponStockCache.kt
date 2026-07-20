@@ -1,6 +1,7 @@
 package com.loopers.infrastructure.coupon
 
 import com.loopers.config.redis.RedisConfig
+import com.loopers.domain.coupon.CouponStockCachePort
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.data.redis.core.RedisTemplate
@@ -18,13 +19,13 @@ import java.util.concurrent.TimeUnit
 class CouponStockCache(
     @Qualifier(RedisConfig.REDIS_TEMPLATE_MASTER)
     masterTemplate: RedisTemplate<*, *>,
-) {
+) : CouponStockCachePort {
     private val log = LoggerFactory.getLogger(javaClass)
 
     @Suppress("UNCHECKED_CAST")
     private val master = masterTemplate as RedisTemplate<String, String>
 
-    fun initialize(couponTemplateId: Long, totalCount: Long) {
+    override fun initialize(couponTemplateId: Long, totalCount: Long) {
         master.opsForValue().setIfAbsent(remainingKey(couponTemplateId), totalCount.toString())
     }
 
@@ -32,7 +33,7 @@ class CouponStockCache(
      * 수량을 1 차감하고 성공 여부를 반환한다.
      * cache miss 시 [remainingCountProvider]로 DB 잔여 수량을 계산해 Redis를 초기화한다.
      */
-    fun reserve(couponTemplateId: Long, remainingCountProvider: () -> Long): Boolean {
+    override fun reserve(couponTemplateId: Long, remainingCountProvider: () -> Long): Boolean {
         tryDecrement(couponTemplateId)?.let { return it }
 
         initializeWithLock(couponTemplateId, remainingCountProvider)
@@ -40,7 +41,7 @@ class CouponStockCache(
         return tryDecrement(couponTemplateId) ?: false
     }
 
-    fun restore(couponTemplateId: Long) {
+    override fun restore(couponTemplateId: Long) {
         try {
             master.opsForValue().increment(remainingKey(couponTemplateId))
         } catch (e: Exception) {

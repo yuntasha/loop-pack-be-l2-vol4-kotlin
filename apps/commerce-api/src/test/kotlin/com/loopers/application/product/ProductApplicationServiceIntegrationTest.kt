@@ -17,6 +17,7 @@ import com.loopers.interfaces.api.product.ProductAdminApplicationServicePort
 import com.loopers.support.error.CoreException
 import com.loopers.support.error.ErrorType
 import com.loopers.utils.DatabaseCleanUp
+import com.loopers.utils.RedisCleanUp
 import java.time.ZonedDateTime
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
@@ -26,10 +27,12 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
-import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 
+// 클래스 @Transactional(롤백) 금지: Brand/Product 캐시가 afterCommit 에 무효화되는데, 롤백 트랜잭션에서는
+// evict 가 실행되지 않아 Redis 에 stale 캐시가 남는다(truncate 후 id 재사용과 결합해 다른 테스트까지 오염).
 @SpringBootTest
-@Transactional
 class ProductApplicationServiceIntegrationTest @Autowired constructor(
     private val productApplicationService: ProductAdminApplicationServicePort,
     private val productRepositoryPort: ProductRepositoryPort,
@@ -38,11 +41,19 @@ class ProductApplicationServiceIntegrationTest @Autowired constructor(
     private val likeService: LikeService,
     private val likeCountQueryPort: LikeCountQueryPort,
     private val orderRepositoryPort: OrderRepositoryPort,
+    private val transactionManager: PlatformTransactionManager,
     private val databaseCleanUp: DatabaseCleanUp,
+    private val redisCleanUp: RedisCleanUp,
 ) {
+    // likeService.register 는 비관적 락 쿼리를 쓰므로 활성 트랜잭션이 필요하다.
+    // 프로덕션의 LikeApplicationServiceAdapter.like(@Transactional) 경계를 시뮬레이션한다.
+    private val txTemplate = TransactionTemplate(transactionManager)
+
     @AfterEach
     fun tearDown() {
         databaseCleanUp.truncateAllTables()
+        // truncate 로 auto_increment 가 리셋되어 id 가 재사용되므로, Redis 캐시도 함께 비워 오염을 막는다
+        redisCleanUp.truncateAll()
     }
 
     @DisplayName("createProduct 통합 흐름")
@@ -147,8 +158,8 @@ class ProductApplicationServiceIntegrationTest @Autowired constructor(
             val detail = productApplicationService.createProduct(
                 CreateProductCommand(name = "p", price = 100L, description = "d", brandId = brand.id, quantity = 10),
             )
-            likeService.register(userId = 1L, productId = detail.id)
-            likeService.register(userId = 2L, productId = detail.id)
+            txTemplate.execute { likeService.register(userId = 1L, productId = detail.id) }
+            txTemplate.execute { likeService.register(userId = 2L, productId = detail.id) }
             assertThat(likeCountQueryPort.countByProductId(detail.id)).isEqualTo(2L)
 
             productApplicationService.deleteProduct(detail.id)
@@ -288,9 +299,9 @@ class ProductApplicationServiceIntegrationTest @Autowired constructor(
             val quietProductId = productApplicationService.createProduct(
                 CreateProductCommand(name = "quiet", price = 100L, description = "d", brandId = brand.id, quantity = 1),
             ).id
-            likeService.register(userId = 1L, productId = popularProductId)
-            likeService.register(userId = 2L, productId = popularProductId)
-            likeService.register(userId = 3L, productId = popularProductId)
+            txTemplate.execute { likeService.register(userId = 1L, productId = popularProductId) }
+            txTemplate.execute { likeService.register(userId = 2L, productId = popularProductId) }
+            txTemplate.execute { likeService.register(userId = 3L, productId = popularProductId) }
 
             val result = productApplicationService.getProducts(null, ProductSort.LATEST, PageRequest(page = 0, size = 10))
 
@@ -342,10 +353,10 @@ class ProductApplicationServiceIntegrationTest @Autowired constructor(
             val popular = productApplicationService.createProduct(CreateProductCommand(name = "popular", price = 100L, description = "d", brandId = brand.id, quantity = 1)).id
             val quiet = productApplicationService.createProduct(CreateProductCommand(name = "quiet", price = 100L, description = "d", brandId = brand.id, quantity = 1)).id
             val mid = productApplicationService.createProduct(CreateProductCommand(name = "mid", price = 100L, description = "d", brandId = brand.id, quantity = 1)).id
-            likeService.register(userId = 1L, productId = popular)
-            likeService.register(userId = 2L, productId = popular)
-            likeService.register(userId = 3L, productId = popular)
-            likeService.register(userId = 1L, productId = mid)
+            txTemplate.execute { likeService.register(userId = 1L, productId = popular) }
+            txTemplate.execute { likeService.register(userId = 2L, productId = popular) }
+            txTemplate.execute { likeService.register(userId = 3L, productId = popular) }
+            txTemplate.execute { likeService.register(userId = 1L, productId = mid) }
 
             val result = productApplicationService.getProducts(null, ProductSort.LIKES_DESC, PageRequest(page = 0, size = 10))
 
@@ -365,8 +376,8 @@ class ProductApplicationServiceIntegrationTest @Autowired constructor(
             assertThat(before.items.first().id).isEqualTo(b)
 
             // a에 좋아요 2개 → a가 앞으로
-            likeService.register(userId = 1L, productId = a)
-            likeService.register(userId = 2L, productId = a)
+            txTemplate.execute { likeService.register(userId = 1L, productId = a) }
+            txTemplate.execute { likeService.register(userId = 2L, productId = a) }
             val after = productApplicationService.getProducts(null, ProductSort.LIKES_DESC, PageRequest(page = 0, size = 10))
             assertThat(after.items.first().id).isEqualTo(a)
         }

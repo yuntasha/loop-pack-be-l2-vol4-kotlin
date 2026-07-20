@@ -4,13 +4,12 @@ import com.loopers.application.outbox.OutboxFactory
 import com.loopers.domain.auth.AuthService
 import com.loopers.domain.common.PageRequest
 import com.loopers.domain.common.PageResult
-import com.loopers.domain.coupon.CouponIssueFailureReason
 import com.loopers.domain.coupon.CouponIssueRequest
 import com.loopers.domain.coupon.CouponIssueRequestRepositoryPort
+import com.loopers.domain.coupon.CouponStockCachePort
 import com.loopers.domain.coupon.CouponTemplateService
 import com.loopers.domain.coupon.UserCouponRepositoryPort
 import com.loopers.domain.coupon.UserCouponService
-import com.loopers.infrastructure.coupon.CouponStockCache
 import com.loopers.interfaces.api.coupon.CouponAdminApplicationServicePort
 import com.loopers.interfaces.api.coupon.CouponApplicationServicePort
 import com.loopers.support.error.CoreException
@@ -28,7 +27,7 @@ class CouponApplicationServiceAdapter(
     private val authService: AuthService,
     private val couponIssueRequestRepositoryPort: CouponIssueRequestRepositoryPort,
     private val userCouponRepositoryPort: UserCouponRepositoryPort,
-    private val couponStockCache: CouponStockCache,
+    private val couponStockCache: CouponStockCachePort,
     private val couponIssueWriter: CouponIssueWriter,
     private val outboxFactory: OutboxFactory,
 ) : CouponAdminApplicationServicePort,

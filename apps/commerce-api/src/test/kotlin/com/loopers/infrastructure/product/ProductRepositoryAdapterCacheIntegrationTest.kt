@@ -105,7 +105,8 @@ class ProductRepositoryAdapterCacheIntegrationTest @Autowired constructor(
 
             assertThat(second.items).hasSize(2)
             val key = CacheKeys.likeDescPage(1L, 0, 20)
-            assertThat(redis.getExpire(key)).isGreaterThan(0L).isLessThanOrEqualTo(60L)
+            // PAGE_TTL(60s)에 ±10% jitter 가 적용되므로 상한은 66s
+            assertThat(redis.getExpire(key)).isGreaterThan(0L).isLessThanOrEqualTo(66L)
         }
 
         @DisplayName("brandId가 없으면 캐시하지 않는다(매번 최신 DB 결과).")

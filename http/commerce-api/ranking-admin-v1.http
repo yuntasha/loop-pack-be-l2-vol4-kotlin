@@ -1,0 +1,74 @@
+### 가중치 설정 목록 조회
+GET {{host}}/api-admin/v1/rankings/weights
+X-Loopers-Ldap: loopers.admin
+
+### 신규 가중치 버전 등록 (논리 가중치 입력 - 저장 시 ×10 스케일)
+POST {{host}}/api-admin/v1/rankings/weights
+Content-Type: application/json
+X-Loopers-Ldap: loopers.admin
+
+{
+  "version": "v2",
+  "viewWeight": 2,
+  "likeWeight": 8,
+  "orderWeight": 40
+}
+
+### 가중치 버전 활성화 (flip / 롤백 - 기존 ACTIVE는 PREPARING으로 강등)
+POST {{host}}/api-admin/v1/rankings/weights/v2/activate
+X-Loopers-Ldap: loopers.admin
+
+### 가중치 버전 은퇴 (이중 적재 종료 - PREPARING 상태만 가능)
+POST {{host}}/api-admin/v1/rankings/weights/v1/retire
+X-Loopers-Ldap: loopers.admin
+
+### 은퇴 번복 (RETIRED → PREPARING, 보드 공백은 replay 재실행으로 복구)
+POST {{host}}/api-admin/v1/rankings/weights/v1/reopen
+X-Loopers-Ldap: loopers.admin
+
+### [예외] 어드민 권한 없음 - 403
+GET {{host}}/api-admin/v1/rankings/weights
+
+### [예외] 중복 버전 등록 - 409
+POST {{host}}/api-admin/v1/rankings/weights
+Content-Type: application/json
+X-Loopers-Ldap: loopers.admin
+
+{
+  "version": "v2",
+  "viewWeight": 1,
+  "likeWeight": 5,
+  "orderWeight": 50
+}
+
+### [예외] 가중치 0 이하 - 400
+POST {{host}}/api-admin/v1/rankings/weights
+Content-Type: application/json
+X-Loopers-Ldap: loopers.admin
+
+{
+  "version": "v3",
+  "viewWeight": 0,
+  "likeWeight": 5,
+  "orderWeight": 50
+}
+
+### [예외] 잘못된 버전 형식 - 400
+POST {{host}}/api-admin/v1/rankings/weights
+Content-Type: application/json
+X-Loopers-Ldap: loopers.admin
+
+{
+  "version": "latest",
+  "viewWeight": 1,
+  "likeWeight": 5,
+  "orderWeight": 50
+}
+
+### [예외] ACTIVE 버전 은퇴 시도 - 409
+POST {{host}}/api-admin/v1/rankings/weights/v2/retire
+X-Loopers-Ldap: loopers.admin
+
+### [예외] 미등록 버전 활성화 - 404
+POST {{host}}/api-admin/v1/rankings/weights/v99/activate
+X-Loopers-Ldap: loopers.admin

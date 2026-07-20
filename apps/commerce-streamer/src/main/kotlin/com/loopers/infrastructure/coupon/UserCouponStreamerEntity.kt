@@ -10,7 +10,6 @@ import jakarta.persistence.Id
 import jakarta.persistence.Index
 import jakarta.persistence.Table
 import java.time.LocalDateTime
-import java.time.ZonedDateTime
 
 enum class PersistedUserCouponStatus {
     ACTIVE,

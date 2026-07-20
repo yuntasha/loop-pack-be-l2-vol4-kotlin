@@ -18,6 +18,7 @@ import com.loopers.interfaces.api.product.ProductAdminApplicationServicePort
 import com.loopers.support.error.CoreException
 import com.loopers.support.error.ErrorType
 import com.loopers.utils.DatabaseCleanUp
+import com.loopers.utils.RedisCleanUp
 import java.time.ZonedDateTime
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
@@ -27,10 +28,12 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
-import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 
+// 클래스 @Transactional(롤백) 금지: Brand 캐시가 afterCommit 에 무효화되는데, 롤백 트랜잭션에서는
+// evict 가 실행되지 않아 Redis 에 stale 캐시가 남는다(truncate 후 id 재사용과 결합해 다른 테스트까지 오염).
 @SpringBootTest
-@Transactional
 class BrandApplicationServiceIntegrationTest @Autowired constructor(
     private val brandApplicationService: BrandAdminApplicationServicePort,
     private val brandRepositoryPort: BrandRepositoryPort,
@@ -40,11 +43,19 @@ class BrandApplicationServiceIntegrationTest @Autowired constructor(
     private val likeService: LikeService,
     private val likeCountQueryPort: LikeCountQueryPort,
     private val orderRepositoryPort: OrderRepositoryPort,
+    private val transactionManager: PlatformTransactionManager,
     private val databaseCleanUp: DatabaseCleanUp,
+    private val redisCleanUp: RedisCleanUp,
 ) {
+    // likeService.register 는 비관적 락 쿼리를 쓰므로 활성 트랜잭션이 필요하다.
+    // 프로덕션의 LikeApplicationServiceAdapter.like(@Transactional) 경계를 시뮬레이션한다.
+    private val txTemplate = TransactionTemplate(transactionManager)
+
     @AfterEach
     fun tearDown() {
         databaseCleanUp.truncateAllTables()
+        // truncate 로 auto_increment 가 리셋되어 id 가 재사용되므로, Redis 캐시도 함께 비워 오염을 막는다
+        redisCleanUp.truncateAll()
     }
 
     @DisplayName("createBrand 통합 흐름")
@@ -170,8 +181,8 @@ class BrandApplicationServiceIntegrationTest @Autowired constructor(
                 )
             }
             productDetails.forEach { detail ->
-                likeService.register(userId = 1L, productId = detail.id)
-                likeService.register(userId = 2L, productId = detail.id)
+                txTemplate.execute { likeService.register(userId = 1L, productId = detail.id) }
+                txTemplate.execute { likeService.register(userId = 2L, productId = detail.id) }
             }
             productDetails.forEach { detail ->
                 assertThat(likeCountQueryPort.countByProductId(detail.id)).isEqualTo(2L)

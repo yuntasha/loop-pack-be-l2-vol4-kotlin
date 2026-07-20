@@ -4,11 +4,11 @@ import com.loopers.application.outbox.OutboxFactory
 import com.loopers.domain.auth.AuthService
 import com.loopers.domain.common.PageRequest
 import com.loopers.domain.common.PageResult
-import com.loopers.domain.coupon.CouponIssueFailureReason
 import com.loopers.domain.coupon.CouponIssueRequest
 import com.loopers.domain.coupon.CouponIssueRequestRepositoryPort
 import com.loopers.domain.coupon.CouponIssueStatus
 import com.loopers.domain.coupon.CouponStatus
+import com.loopers.domain.coupon.CouponStockCachePort
 import com.loopers.domain.coupon.CouponTemplate
 import com.loopers.domain.coupon.CouponTemplateService
 import com.loopers.domain.coupon.CouponType
@@ -16,7 +16,6 @@ import com.loopers.domain.coupon.UserCoupon
 import com.loopers.domain.coupon.UserCouponRepositoryPort
 import com.loopers.domain.coupon.UserCouponService
 import com.loopers.domain.outbox.Outbox
-import com.loopers.infrastructure.coupon.CouponStockCache
 import com.loopers.support.error.CoreException
 import com.loopers.support.error.ErrorType
 import io.mockk.every
@@ -37,7 +36,7 @@ class CouponApplicationServiceAdapterTest {
     private lateinit var authService: AuthService
     private lateinit var couponIssueRequestRepositoryPort: CouponIssueRequestRepositoryPort
     private lateinit var userCouponRepositoryPort: UserCouponRepositoryPort
-    private lateinit var couponStockCache: CouponStockCache
+    private lateinit var couponStockCache: CouponStockCachePort
     private lateinit var couponIssueWriter: CouponIssueWriter
     private lateinit var outboxFactory: OutboxFactory
     private lateinit var couponApplicationService: CouponApplicationServiceAdapter
@@ -205,12 +204,20 @@ class CouponApplicationServiceAdapterTest {
         val t = template(id = 3L)
         val issuedAt = LocalDateTime.parse("2026-06-07T10:00:00")
         val coupon1 = UserCoupon(
-            id = 21L, couponTemplateId = 3L, userId = 9L,
-            status = CouponStatus.AVAILABLE, issuedAt = issuedAt, usedAt = null,
+            id = 21L,
+            couponTemplateId = 3L,
+            userId = 9L,
+            status = CouponStatus.AVAILABLE,
+            issuedAt = issuedAt,
+            usedAt = null,
         )
         val coupon2 = UserCoupon(
-            id = 20L, couponTemplateId = 3L, userId = 8L,
-            status = CouponStatus.USED, issuedAt = issuedAt, usedAt = LocalDateTime.parse("2026-06-07T11:00:00"),
+            id = 20L,
+            couponTemplateId = 3L,
+            userId = 8L,
+            status = CouponStatus.USED,
+            issuedAt = issuedAt,
+            usedAt = LocalDateTime.parse("2026-06-07T11:00:00"),
         )
         val pageRequest = PageRequest(page = 0, size = 20)
         every { couponTemplateService.getById(3L) } returns t
@@ -245,7 +252,12 @@ class CouponApplicationServiceAdapterTest {
         minOrderAmount: Long = 30_000L,
         totalCount: Long = 100L,
     ) = CouponTemplate(
-        id = id, name = name, type = type, value = value,
-        minOrderAmount = minOrderAmount, expiredAt = expiredAt, totalCount = totalCount,
+        id = id,
+        name = name,
+        type = type,
+        value = value,
+        minOrderAmount = minOrderAmount,
+        expiredAt = expiredAt,
+        totalCount = totalCount,
     )
 }

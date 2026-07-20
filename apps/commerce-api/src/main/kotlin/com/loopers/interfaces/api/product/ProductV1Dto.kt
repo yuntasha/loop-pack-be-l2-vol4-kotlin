@@ -13,6 +13,7 @@ class ProductV1Dto {
         val brandName: String,
         val stockQuantity: Int,
         val likeCount: Long,
+        val ranking: RankingResponse?,
     ) {
         companion object {
             fun from(detail: ProductDetail): ProductResponse = ProductResponse(
@@ -24,9 +25,15 @@ class ProductV1Dto {
                 brandName = detail.brandName,
                 stockQuantity = detail.stockQuantity,
                 likeCount = detail.likeCount,
+                ranking = detail.ranking?.let { RankingResponse(rank = it.rank, score = it.score) },
             )
         }
     }
+
+    data class RankingResponse(
+        val rank: Long,
+        val score: Double,
+    )
 
     data class ProductSummaryResponse(
         val id: Long,

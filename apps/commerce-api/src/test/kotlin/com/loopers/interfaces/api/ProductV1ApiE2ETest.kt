@@ -4,7 +4,6 @@ import com.loopers.application.product.CreateProductCommand
 import com.loopers.application.product.UpdateProductCommand
 import com.loopers.domain.brand.Brand
 import com.loopers.domain.brand.BrandRepositoryPort
-import com.loopers.domain.like.LikeService
 import com.loopers.interfaces.api.like.LikeApplicationServicePort
 import com.loopers.interfaces.api.product.ProductAdminApplicationServicePort
 import com.loopers.utils.DatabaseCleanUp
@@ -30,7 +29,6 @@ class ProductV1ApiE2ETest @Autowired constructor(
     private val testRestTemplate: TestRestTemplate,
     private val brandRepositoryPort: BrandRepositoryPort,
     private val productApplicationService: ProductAdminApplicationServicePort,
-    private val likeService: LikeService,
     private val likeApplicationService: LikeApplicationServicePort,
     private val databaseCleanUp: DatabaseCleanUp,
     private val redisCleanUp: RedisCleanUp,
@@ -168,8 +166,10 @@ class ProductV1ApiE2ETest @Autowired constructor(
             val brand = brandRepositoryPort.save(Brand.create(name = "Nike", description = "x"))
             val popular = productApplicationService.createProduct(CreateProductCommand(name = "popular", price = 100L, description = "d", brandId = brand.id, quantity = 1)).id
             val quiet = productApplicationService.createProduct(CreateProductCommand(name = "quiet", price = 100L, description = "d", brandId = brand.id, quantity = 1)).id
-            likeService.register(userId = 1L, productId = popular)
-            likeService.register(userId = 2L, productId = popular)
+            // likeService.register 직접 호출은 비관적 락 쿼리 때문에 활성 트랜잭션이 필요하다.
+            // E2E 답게 트랜잭션 경계를 가진 애플리케이션 서비스 경유로 등록한다.
+            likeApplicationService.like(userId = 1L, productId = popular)
+            likeApplicationService.like(userId = 2L, productId = popular)
 
             val response = listProducts(sort = "likes_desc")
 

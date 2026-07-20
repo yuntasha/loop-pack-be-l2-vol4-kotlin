@@ -31,8 +31,11 @@ class OutboxKafkaRelayService(
         runCatching {
             kafkaTemplate.send(outbox.topic, outbox.payload)
                 .whenComplete { _, ex ->
-                    if (ex == null) outboxWriter.markPublished(outbox.eventId)
-                    else log.error("Failed to publish outbox event eventId={}", outbox.eventId, ex)
+                    if (ex == null) {
+                        outboxWriter.markPublished(outbox.eventId)
+                    } else {
+                        log.error("Failed to publish outbox event eventId={}", outbox.eventId, ex)
+                    }
                 }
         }.onFailure {
             log.error("Failed to publish outbox event eventId={}", outbox.eventId, it)

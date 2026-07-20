@@ -34,8 +34,12 @@ class CouponTemplateRepositoryAdapterIntegrationTest @Autowired constructor(
         minOrderAmount: Long = 0L,
         totalCount: Long = 100L,
     ) = CouponTemplate.create(
-        name = name, type = type, value = value,
-        minOrderAmount = minOrderAmount, expiredAt = expiredAt, totalCount = totalCount,
+        name = name,
+        type = type,
+        value = value,
+        minOrderAmount = minOrderAmount,
+        expiredAt = expiredAt,
+        totalCount = totalCount,
     )
 
     @DisplayName("save를 호출할 때, ")

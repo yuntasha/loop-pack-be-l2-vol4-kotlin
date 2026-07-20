@@ -1,11 +1,9 @@
 package com.loopers.application.product
 
 import com.loopers.application.outbox.OutboxFactory
-import com.loopers.application.outbox.OutboxSavedEvent
 import com.loopers.application.outbox.OutboxWriter
 import com.loopers.domain.outbox.ProductMetricType
 import org.slf4j.LoggerFactory
-import org.springframework.context.ApplicationEventPublisher
 import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Component

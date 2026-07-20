@@ -11,13 +11,18 @@ import com.loopers.domain.product.ProductDetail
 import com.loopers.domain.product.ProductService
 import com.loopers.domain.product.ProductSort
 import com.loopers.domain.product.ProductSummary
+import com.loopers.domain.ranking.RankingEntry
+import com.loopers.domain.ranking.RankingService
 import com.loopers.interfaces.api.product.ProductAdminApplicationServicePort
 import com.loopers.interfaces.api.product.ProductApplicationServicePort
 import com.loopers.support.error.CoreException
 import com.loopers.support.error.ErrorType
+import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.LocalDate
+import java.time.ZoneId
 
 @Service
 class ProductApplicationServiceAdapter(
@@ -26,9 +31,12 @@ class ProductApplicationServiceAdapter(
     private val likeService: LikeService,
     private val likeCountQueryPort: LikeCountQueryPort,
     private val orderService: OrderService,
+    private val rankingService: RankingService,
     private val eventPublisher: ApplicationEventPublisher,
 ) : ProductApplicationServicePort,
     ProductAdminApplicationServicePort {
+    private val log = LoggerFactory.getLogger(javaClass)
+
     @Transactional(readOnly = true)
     override fun getProduct(id: Long): ProductDetail {
         val product = productService.getById(id)
@@ -89,8 +97,14 @@ class ProductApplicationServiceAdapter(
         val brand = brandService.getById(product.brandId)
         val stock = productService.getStockByProductId(product.id)
         val likeCount = likeCountQueryPort.countByProductId(product.id)
-        return ProductDetail.of(product, brand, stock, likeCount)
+        return ProductDetail.of(product, brand, stock, likeCount, ranking = todayRankingOf(product.id))
     }
+
+    /** 랭킹은 부가 정보라 Redis 장애가 상세 조회를 막지 않도록 실패를 null로 흡수한다. */
+    private fun todayRankingOf(productId: Long): RankingEntry? =
+        runCatching { rankingService.getProductRanking(LocalDate.now(ZoneId.of("Asia/Seoul")), productId) }
+            .onFailure { log.warn("상품 상세 랭킹 병합 실패. productId={}", productId, it) }
+            .getOrNull()
 
     private fun composeSummaries(products: List<Product>): List<ProductSummary> {
         if (products.isEmpty()) return emptyList()

@@ -10,6 +10,7 @@ import com.loopers.utils.DatabaseCleanUp
 import com.loopers.utils.RedisCleanUp
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -36,6 +37,14 @@ class CouponIssueConcurrencyE2ETest @Autowired constructor(
     private val databaseCleanUp: DatabaseCleanUp,
     private val redisCleanUp: RedisCleanUp,
 ) {
+    // 다른 테스트 클래스가 Redis 를 안 지운 채 남긴 coupon:{id}:remaining 키가, truncate 로 리셋된
+    // auto_increment 와 결합해 같은 쿠폰 id 로 재사용될 수 있다. createCoupon 의 initialize 는
+    // setIfAbsent 라 잔여 키가 있으면 수량이 초기화되지 않으므로, 시작 전에 반드시 비운다.
+    @BeforeEach
+    fun setUp() {
+        redisCleanUp.truncateAll()
+    }
+
     @AfterEach
     fun tearDown() {
         databaseCleanUp.truncateAllTables()

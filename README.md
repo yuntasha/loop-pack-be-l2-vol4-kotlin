@@ -33,7 +33,8 @@ Root
 ├── apps ( spring-applications )
 │   ├── 📦 commerce-api
 │   ├── 📦 commerce-batch
-│   └── 📦 commerce-streamer
+│   ├── 📦 commerce-streamer
+│   └── 📦 commerce-collector
 ├── modules ( reusable-configurations )
 │   ├── 📦 jpa
 │   ├── 📦 redis

@@ -23,7 +23,14 @@ import java.net.SocketTimeoutException
  * PG 어댑터의 회복 전략(재시도·서킷 브레이커·폴백)이 실제로 동작하는지 검증한다.
  * 외부 호출 경계인 [PgPaymentClient] 만 목으로 대체하고, 어댑터 + resilience4j AOP 는 실제로 로드한다.
  */
-@SpringBootTest
+// 프로덕션 서킷 설정(sliding-window 100 / minimum-calls 50)으로는 테스트의 15회 실패(5회 × 재시도 3)로
+// 서킷이 열리지 않는다. 상태 전이 로직 자체를 검증하는 것이 목적이므로 테스트 전용 윈도우로 축소한다.
+@SpringBootTest(
+    properties = [
+        "resilience4j.circuitbreaker.instances.pgPayment.sliding-window-size=10",
+        "resilience4j.circuitbreaker.instances.pgPayment.minimum-number-of-calls=10",
+    ],
+)
 class PgPaymentGatewayAdapterResilienceIntegrationTest @Autowired constructor(
     private val paymentGatewayPort: PaymentGatewayPort,
     private val circuitBreakerRegistry: CircuitBreakerRegistry,

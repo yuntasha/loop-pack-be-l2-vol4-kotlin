@@ -1,0 +1,230 @@
+package com.loopers.infrastructure.ranking
+
+import com.loopers.config.redis.RedisConfig
+import com.loopers.domain.ranking.RankingBoard
+import com.loopers.domain.ranking.RankingRolloverPort
+import com.loopers.domain.ranking.RankingRolloverStatus
+import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Qualifier
+import org.springframework.data.redis.core.RedisTemplate
+import org.springframework.data.redis.core.ZSetOperations.TypedTuple
+import org.springframework.data.redis.core.script.DefaultRedisScript
+import org.springframework.stereotype.Component
+import java.time.Duration
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.UUID
+import kotlin.math.floor
+
+/**
+ * 이월 상태 머신 어댑터. ranking:rollover:status:{v}:{D}가 `PROGRESS:{ownerToken}` SET NX로 분산 락을 겸하고,
+ * 완료 시 소유 토큰 일치 조건으로만 DONE으로 전이한다. 정기 이월 배치(commerce-batch)와 키 규약·status 값 포맷·
+ * Lua 스크립트를 상수 계약으로 동일하게 유지한다.
+ *
+ * 장애 내성 구조(세 겹):
+ * - 페이지 반영(ZINCRBY×N) + 커서 갱신 + heartbeat를 하나의 Lua로 원자화 → 재실행이 커서부터 이어져 중복 없음
+ * - 소유자 토큰 펜싱 → stall로 PROGRESS 만료 후 이중 실행 시 구 주체의 쓰기 차단
+ * - 연결·타임아웃 순단은 페이지 연산 단위 리트라이, 소진 시 status만 정리(best-effort)하고 커서는 남긴다
+ */
+@Component
+class RankingRolloverAdapter(
+    @Qualifier(RedisConfig.REDIS_TEMPLATE_MASTER)
+    masterTemplate: RedisTemplate<*, *>,
+    private val retry: RedisTransientRetry = RedisTransientRetry(),
+) : RankingRolloverPort {
+    private val log = LoggerFactory.getLogger(javaClass)
+
+    @Suppress("UNCHECKED_CAST")
+    private val master = masterTemplate as RedisTemplate<String, String>
+
+    private val pageScript = DefaultRedisScript(CARRY_OVER_PAGE_LUA, Long::class.java)
+    private val completeScript = DefaultRedisScript(COMPLETE_IF_OWNER_LUA, Long::class.java)
+    private val releaseScript = DefaultRedisScript(RELEASE_IF_OWNER_LUA, Long::class.java)
+
+    override fun getStatus(version: String, targetDate: LocalDate): RankingRolloverStatus {
+        val status = master.opsForValue().get(statusKey(version, targetDate))
+        return when {
+            status == STATUS_DONE -> RankingRolloverStatus.DONE
+            status?.startsWith(STATUS_PROGRESS) == true -> RankingRolloverStatus.IN_PROGRESS
+            else -> RankingRolloverStatus.NOT_STARTED
+        }
+    }
+
+    override fun tryStart(version: String, targetDate: LocalDate): String? {
+        val ownerToken = UUID.randomUUID().toString()
+        val started = master.opsForValue()
+            .setIfAbsent(statusKey(version, targetDate), ownerValue(ownerToken), PROGRESS_TTL) == true
+        return if (started) ownerToken else null
+    }
+
+    override fun carryOverSnapshot(version: String, fromDate: LocalDate, toDate: LocalDate, ownerToken: String): Boolean {
+        val fromKey = RankingBoard.snapshotOf(version, fromDate).key()
+        val toAllKey = RankingBoard.allOf(version, toDate).key()
+        val toSnapshotKey = RankingBoard.snapshotOf(version, toDate).key()
+        val statusKey = statusKey(version, toDate)
+        val cursorKey = cursorKey(version, toDate)
+        val pageKeys = listOf(statusKey, cursorKey, toAllKey, toSnapshotKey)
+
+        try {
+            var offset = readCursor(cursorKey)
+            var carried = 0L
+            while (true) {
+                val tuples = retry.execute("snapshot ZRANGE") {
+                    master.opsForZSet().rangeWithScores(fromKey, offset, offset + PAGE_SIZE - 1)
+                }?.toList().orEmpty()
+                if (tuples.isEmpty()) break
+
+                val args = pageArgs(ownerToken, offset, nextCursor = offset + tuples.size, tuples)
+                val result = retry.execute("carry-over page EVAL") {
+                    master.execute(pageScript, pageKeys, *args.toTypedArray())
+                }
+                when (result) {
+                    PAGE_OWNERSHIP_LOST -> {
+                        log.warn("이월 소유권 상실 - 다른 주체가 인수해 진행 중이므로 즉시 중단한다. statusKey={}, offset={}", statusKey, offset)
+                        return false
+                    }
+                    // 응답 유실 후 리트라이 등으로 커서가 이미 이 페이지를 지났다 - 커서 기준으로 재동기화해 중복을 막는다
+                    PAGE_ALREADY_APPLIED -> offset = readCursor(cursorKey)
+                    else -> {
+                        carried += (args.size - PAGE_FIXED_ARGS) / 2
+                        offset += tuples.size
+                        if (tuples.size < PAGE_SIZE) break
+                    }
+                }
+            }
+            log.info("랭킹 이월 완료. from={}, to={}, carriedMembers={}", fromKey, toAllKey, carried)
+            return true
+        } catch (e: Exception) {
+            if (RedisTransientRetry.isTransient(e)) abandon(statusKey, ownerToken, e)
+            throw e
+        }
+    }
+
+    override fun complete(version: String, targetDate: LocalDate, ownerToken: String): Boolean {
+        val keys = listOf(statusKey(version, targetDate), cursorKey(version, targetDate))
+        val done = master.execute(completeScript, keys, ownerValue(ownerToken), STATUS_DONE, DONE_TTL.seconds.toString()) == 1L
+        if (!done) {
+            log.warn("이월 완료 기록 실패 - 소유권이 이미 다른 주체로 넘어갔다. statusKey={}", keys.first())
+        }
+        return done
+    }
+
+    override fun tryMarkNotified(version: String, targetDate: LocalDate): Boolean =
+        master.opsForValue().setIfAbsent(notifiedKey(version, targetDate), "1", NOTIFIED_TTL) == true
+
+    /**
+     * 리트라이 소진 시 포기 경로 - 소유 status만 조건부 삭제해 다음 주체가 TTL 만료(≤10분)를 기다리지 않고
+     * 즉시 재선점하게 한다. Redis가 아직 죽어 있어 삭제도 실패하면 무시(TTL 만료가 안전망).
+     * 커서는 삭제하지 않는다 - 다음 주체의 재개 지점이다.
+     */
+    private fun abandon(statusKey: String, ownerToken: String, cause: Exception) {
+        runCatching { master.execute(releaseScript, listOf(statusKey), ownerValue(ownerToken)) }
+            .onFailure { log.warn("포기 시 status 조건부 삭제 실패 - PROGRESS TTL 만료가 안전망으로 동작한다. statusKey={}", statusKey, it) }
+        log.error("이월 리트라이 소진으로 포기 - 커서를 남겨 다음 주체가 이어서 실행한다. statusKey={}", statusKey, cause)
+    }
+
+    private fun readCursor(cursorKey: String): Long =
+        retry.execute("cursor GET") { master.opsForValue().get(cursorKey) }?.toLongOrNull() ?: 0L
+
+    private fun pageArgs(
+        ownerToken: String,
+        offset: Long,
+        nextCursor: Long,
+        tuples: List<TypedTuple<String>>,
+    ): List<String> = buildList {
+        add(ownerValue(ownerToken))
+        add(offset.toString())
+        add(nextCursor.toString())
+        add(PROGRESS_TTL.seconds.toString())
+        add(CURSOR_TTL.seconds.toString())
+        add(ZSET_TTL.seconds.toString())
+        tuples.forEach { tuple ->
+            val member = tuple.value ?: return@forEach
+            val carry = floor((tuple.score ?: 0.0) * CARRY_OVER_FACTOR).toLong()
+            if (carry == 0L) return@forEach
+            add(member)
+            add(carry.toString())
+        }
+    }
+
+    private fun ownerValue(ownerToken: String): String = "$STATUS_PROGRESS:$ownerToken"
+
+    private fun statusKey(version: String, targetDate: LocalDate): String =
+        "ranking:rollover:status:$version:${targetDate.format(DateTimeFormatter.BASIC_ISO_DATE)}"
+
+    private fun cursorKey(version: String, targetDate: LocalDate): String =
+        "ranking:rollover:cursor:$version:${targetDate.format(DateTimeFormatter.BASIC_ISO_DATE)}"
+
+    private fun notifiedKey(version: String, targetDate: LocalDate): String =
+        "ranking:rollover:notified:$version:${targetDate.format(DateTimeFormatter.BASIC_ISO_DATE)}"
+
+    companion object {
+        private const val STATUS_PROGRESS = "PROGRESS"
+        private const val STATUS_DONE = "DONE"
+        private val PROGRESS_TTL = Duration.ofMinutes(10)
+        private val DONE_TTL = Duration.ofDays(2)
+        private val NOTIFIED_TTL = Duration.ofDays(1)
+        private val ZSET_TTL = Duration.ofDays(2)
+        private val CURSOR_TTL = Duration.ofDays(2)
+        private const val CARRY_OVER_FACTOR = 0.1
+        private const val PAGE_SIZE = 1000
+        private const val PAGE_FIXED_ARGS = 6
+
+        private const val PAGE_OWNERSHIP_LOST = -1L
+        private const val PAGE_ALREADY_APPLIED = 0L
+
+        /**
+         * 페이지 반영 Lua - commerce-batch RankingRolloverTasklet과 동일한 상수 계약.
+         * KEYS[1] = status key, KEYS[2] = cursor key, KEYS[3] = ranking:all:{v}:{D+1}, KEYS[4] = ranking:snapshot:{v}:{D+1}
+         * ARGV[1] = 소유자 status 값 (PROGRESS:{ownerToken})
+         * ARGV[2] = 이 페이지의 오프셋, ARGV[3] = 다음 커서
+         * ARGV[4] = progress ttl, ARGV[5] = cursor ttl, ARGV[6] = zset ttl (초)
+         * ARGV[7..] = (member, carry) 반복 - carry=0 멤버는 클라이언트에서 제외
+         *
+         * 반환: 1 = 반영, -1 = 소유권 상실(펜싱), 0 = 커서가 이미 이 페이지를 지남(응답 유실 재시도 가드)
+         */
+        internal const val CARRY_OVER_PAGE_LUA = """
+            if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+                return -1
+            end
+            if tonumber(redis.call('GET', KEYS[2]) or '0') ~= tonumber(ARGV[2]) then
+                return 0
+            end
+            for i = 7, #ARGV, 2 do
+                redis.call('ZINCRBY', KEYS[3], ARGV[i + 1], ARGV[i])
+                redis.call('ZINCRBY', KEYS[4], ARGV[i + 1], ARGV[i])
+            end
+            redis.call('EXPIRE', KEYS[3], ARGV[6])
+            redis.call('EXPIRE', KEYS[4], ARGV[6])
+            redis.call('SET', KEYS[2], ARGV[3], 'EX', ARGV[5])
+            redis.call('EXPIRE', KEYS[1], ARGV[4])
+            return 1
+        """
+
+        /**
+         * 완료 조건부 Lua - GET status == 내 소유 값일 때만 DONE 전이 + 커서 삭제.
+         * KEYS[1] = status key, KEYS[2] = cursor key
+         * ARGV[1] = 소유자 status 값, ARGV[2] = DONE, ARGV[3] = done ttl (초)
+         */
+        internal const val COMPLETE_IF_OWNER_LUA = """
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+                redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+                redis.call('DEL', KEYS[2])
+                return 1
+            end
+            return 0
+        """
+
+        /**
+         * 포기 조건부 Lua - GET status == 내 소유 값일 때만 삭제 (타 소유자의 status는 건드리지 않는다).
+         * KEYS[1] = status key, ARGV[1] = 소유자 status 값
+         */
+        internal const val RELEASE_IF_OWNER_LUA = """
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+                redis.call('DEL', KEYS[1])
+                return 1
+            end
+            return 0
+        """
+    }
+}
